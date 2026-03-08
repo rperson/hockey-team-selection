@@ -100,7 +100,7 @@ def attempt_build(players_list):
                 (team_b, "D")
             ]
 
-        best_move = None
+        best_move = (None, None)
         best_diff = float("inf")
 
         for team, pos in options:
@@ -155,7 +155,7 @@ def build_teams(input_file):
     if len(players) < 10:
         raise ValueError("Not enough selected players")
 
-    best = None
+    best = (None, None)
     best_diff = float("inf")
 
     for _ in range(ITERATIONS):

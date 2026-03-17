@@ -186,15 +186,15 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
     Builds balanced teams by extracting player names from an EML roster file
     and looking up their rank/position from an Excel player data file.
     """
-    # 1. Get player names from EML roster file
-    eml_player_names = extract_players_from_eml(roster_eml_path)
-    if not eml_player_names:
-        raise ValueError("No player names extracted from the EML roster.")
-
     # 2. Read player data (ranks and positions) from the Excel file
     df_players = pd.read_excel(player_data_xlsx_path)
 
     required_columns_xlsx = {"Name", "Rank", "Position"}
+    # Ensure 'Name' column is treated as string to avoid issues with .strip().upper() later
+    if 'Name' in df_players.columns:
+        df_players['Name'] = df_players['Name'].astype(str)
+
+
     if not required_columns_xlsx.issubset(df_players.columns):
         raise ValueError(
             f"Player data Excel file must contain '{', '.join(required_columns_xlsx)}' columns."
@@ -202,12 +202,17 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
 
     # Create a lookup dictionary for player data for efficient access
     player_data_lookup = {
-        str(row["Name"]).strip().upper(): { # Cast to str to handle potential non-string values
+        row["Name"].strip().upper(): {
             "rank": int(cast(int, row["Rank"])),
             "position": cast(str, row["Position"]).strip().upper(),
         }
         for _, row in df_players.iterrows()
     }
+
+    # 1. Get player names from EML roster file, validating against the Excel data
+    eml_player_names = extract_players_from_eml(roster_eml_path, player_data_lookup)
+    if not eml_player_names:
+        raise ValueError("No player names extracted from the EML roster.")
 
     # 3. Construct Player objects for the game night roster
     players_for_tonight = []

@@ -6,6 +6,7 @@ import tkinter as tk
 from typing import cast
 from tkinter import filedialog, messagebox
 import email
+from email.message import EmailMessage # Added
 from email import policy
 import re
 
@@ -59,20 +60,12 @@ def can_add(team, pos):
         return len(team["D"]) < DEFENCE_TARGET
     return False
 
-
-def can_add(team, pos):
-    if pos == "F":
-        return len(team["F"]) < FORWARDS_TARGET
-    if pos == "D":
-        return len(team["D"]) < DEFENCE_TARGET
-    return False
-
 def extract_players_from_eml(eml_file_path):
     """
     Parses an EML file to extract the list of player names from the final roster section.
     """
     with open(eml_file_path, 'rb') as fp:
-        msg = email.message_from_binary_file(fp, policy=policy.default)
+        msg: EmailMessage = email.message_from_binary_file(fp, policy=policy.default) # Added type hint
 
     player_names = []
     payload = ""
@@ -81,13 +74,13 @@ def extract_players_from_eml(eml_file_path):
     if msg.is_multipart():
         for part in msg.iter_parts():
             if part.get_content_type() == 'text/plain':
-                payload = part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8')
+                payload = part.get_payload(decode=True) # Removed redundant .decode()
                 break
         else:
             raise ValueError("No plain text part found in the EML file.")
     else:
         if msg.get_content_type() == 'text/plain':
-            payload = msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8')
+            payload = msg.get_payload(decode=True) # Removed redundant .decode()
         else:
             raise ValueError("EML file is not plain text or multipart with a plain text part.")
 
@@ -209,7 +202,7 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
 
     # Create a lookup dictionary for player data for efficient access
     player_data_lookup = {
-        row["Name"].strip().upper(): {
+        str(row["Name"]).strip().upper(): { # Cast to str to handle potential non-string values
             "rank": int(cast(int, row["Rank"])),
             "position": cast(str, row["Position"]).strip().upper(),
         }

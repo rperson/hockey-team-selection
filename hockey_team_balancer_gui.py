@@ -60,9 +60,10 @@ def can_add(team, pos):
         return len(team["D"]) < DEFENCE_TARGET
     return False
 
-def extract_players_from_eml(eml_file_path):
+def extract_players_from_eml(eml_file_path, player_data_lookup):
     """
     Parses an EML file to extract the list of player names from the final roster section.
+    Names are validated against the provided player_data_lookup from the Excel file.
     """
     with open(eml_file_path, 'rb') as fp:
         msg: EmailMessage = email.message_from_binary_file(fp, policy=policy.default) # Added type hint
@@ -74,13 +75,13 @@ def extract_players_from_eml(eml_file_path):
     if msg.is_multipart():
         for part in msg.iter_parts():
             if part.get_content_type() == 'text/plain':
-                payload = part.get_payload(decode=True) # Removed redundant .decode()
+                payload = part.get_payload(decode=True)
                 break
         else:
             raise ValueError("No plain text part found in the EML file.")
     else:
         if msg.get_content_type() == 'text/plain':
-            payload = msg.get_payload(decode=True) # Removed redundant .decode()
+            payload = msg.get_payload(decode=True)
         else:
             raise ValueError("EML file is not plain text or multipart with a plain text part.")
 
@@ -91,17 +92,25 @@ def extract_players_from_eml(eml_file_path):
     in_roster_section = False
     for line in lines:
         stripped_line = line.strip()
+
         if stripped_line.startswith(roster_start_marker):
             in_roster_section = True
             continue # Skip the marker line itself
         
         if in_roster_section:
-            if stripped_line: # If the line is not empty
-                # Clean up potential extra spaces or non-breaking spaces
-                clean_name = re.sub(r'[\s\xa0]+', ' ', stripped_line).strip()
-                if clean_name: # Ensure the name is not just an empty string after cleaning
-                    player_names.append(clean_name)
-            else: # If an empty line is encountered, we've passed the roster list
+            if not stripped_line:
+                # Allow blank lines within the roster section
+                continue
+            
+            # Clean up potential extra spaces or non-breaking spaces
+            clean_name = re.sub(r'[\s\xa0]+', ' ', stripped_line).strip()
+            
+            # Validate the name against the Excel player data
+            normalized_clean_name = clean_name.upper()
+            if clean_name and normalized_clean_name in player_data_lookup:
+                player_names.append(clean_name)
+            else:
+                # This non-empty line is not a recognized player name, so stop parsing the roster
                 break
                 
     if not player_names:

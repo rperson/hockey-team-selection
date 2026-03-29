@@ -70,7 +70,7 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
 
     player_names = []
     payload = ""
-    
+
     # Attempt to get the plain text part of the email
     if msg.is_multipart():
         for part in msg.iter_parts():
@@ -88,23 +88,23 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
     # Find the start of the roster list in the text
     roster_start_marker = "Which leaves you with a roster of"
     lines = payload.splitlines()
-    
+
     in_roster_section = False
     for line in lines:
-        stripped_line = line.strip()
+        stripped_line = line.decode().strip()
 
         if stripped_line.startswith(roster_start_marker):
             in_roster_section = True
             continue # Skip the marker line itself
-        
+
         if in_roster_section:
             if not stripped_line:
                 # Allow blank lines within the roster section
                 continue
-            
+
             # Clean up potential extra spaces or non-breaking spaces
             clean_name = re.sub(r'[\s\xa0]+', ' ', stripped_line).strip()
-            
+
             # Validate the name against the Excel player data
             normalized_clean_name = clean_name.upper()
             if clean_name and normalized_clean_name in player_data_lookup:
@@ -112,7 +112,7 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
             else:
                 # This non-empty line is not a recognized player name, so stop parsing the roster
                 break
-                
+
     if not player_names:
         raise ValueError("Could not find the player roster in the EML file or it was empty.")
 

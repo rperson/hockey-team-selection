@@ -65,8 +65,8 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
     Parses an EML file to extract the list of player names from the final roster section.
     Names are validated against the provided player_data_lookup from the Excel file.
     """
-    with open(eml_file_path, 'rb') as fp:
-        msg: Message = email.message_from_binary_file(fp, policy=policy.default) # Added type hint # type: ignore
+    with open(eml_file_path, 'rb') as fp: # type: ignore
+        msg: EmailMessage = email.message_from_binary_file(fp, policy=policy.default)
 
     player_names = []
     payload = ""
@@ -240,12 +240,28 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
     if len(players_for_tonight) < 10:
         raise ValueError("Not enough selected players for team balancing (minimum 10 needed).")
 
+    players_to_balance = players_for_tonight.copy()
+    median_player_removed = None
+
+    # If there's an odd number of players, remove a median-ranked player
+    # This list must be modified *before* passing to attempt_build
+    if len(players_to_balance) % 2 != 0:
+        # Sort players by rank to find the median. If two are in the middle, pick one.
+        # Using copy() for sorting to avoid modifying players_to_balance in place unnecessarily
+        # if we only need the sorted list for median finding, but pop() requires in-place.
+        # So, we sort `players_to_balance` directly and pop from it.
+        players_to_balance.sort(key=lambda p: p.rank)
+        median_index = len(players_to_balance) // 2
+        # Remove the median player and store them for later re-addition
+        # This reduces players_to_balance to an even number of players
+        median_player_removed = players_to_balance.pop(median_index)
+
     best = (None, None)
     best_diff = float("inf")
 
     for _ in range(ITERATIONS):
         # Pass the list of players constructed from EML names and XLSX data
-        a, b = attempt_build(players_for_tonight.copy())
+        a, b = attempt_build(players_to_balance.copy())
         diff = abs(a["total"] - b["total"])
 
         if diff < best_diff:
@@ -255,7 +271,28 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
         if best_diff == 0:
             break
 
-    return best[0], best[1], best_diff
+    # Re-add the median player if one was removed
+    if median_player_removed: # This condition is true if a player was removed earlier
+        team_a_final = best[0]
+        team_b_final = best[1]
+
+        # Randomly assign the median player to one of the teams
+        if random.choice([True, False]):
+            chosen_team = team_a_final
+        else:
+            chosen_team = team_b_final
+
+        # Add the player to their primary position or 'F' if FLEX
+        if median_player_removed.position == "D":
+            chosen_team["D"].append(median_player_removed)
+        else:  # "F" or "FLEX"
+            chosen_team["F"].append(median_player_removed)
+
+        chosen_team["total"] += median_player_removed.rank
+
+        return team_a_final, team_b_final, abs(team_a_final["total"] - team_b_final["total"])
+    else:
+        return best[0], best[1], best_diff
 
 
 # -----------------------------

@@ -66,7 +66,7 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
     Names are validated against the provided player_data_lookup from the Excel file.
     """
     with open(eml_file_path, 'rb') as fp:
-        msg: EmailMessage = email.message_from_binary_file(fp, policy=policy.default) # Added type hint
+        msg: Message = email.message_from_binary_file(fp, policy=policy.default) # Added type hint # type: ignore
 
     player_names = []
     payload = ""
@@ -196,13 +196,9 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
     and looking up their rank/position from an Excel player data file.
     """
     # 2. Read player data (ranks and positions) from the Excel file
-    df_players = pd.read_excel(player_data_xlsx_path)
+    df_players = pd.read_excel(player_data_xlsx_path, dtype={"Name": str, "Rank": int, "Position": str})
 
     required_columns_xlsx = {"Name", "Rank", "Position"}
-    # Ensure 'Name' column is treated as string to avoid issues with .strip().upper() later
-    if 'Name' in df_players.columns:
-        df_players['Name'] = df_players['Name'].astype(str)
-
 
     if not required_columns_xlsx.issubset(df_players.columns):
         raise ValueError(
@@ -211,7 +207,7 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
 
     # Create a lookup dictionary for player data for efficient access
     player_data_lookup = {
-        row["Name"].strip().upper(): {
+        cast(str, row["Name"]).strip().upper(): {
             "rank": int(cast(int, row["Rank"])),
             "position": cast(str, row["Position"]).strip().upper(),
         }

@@ -85,15 +85,26 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
         else:
             raise ValueError("EML file is not plain text or multipart with a plain text part.")
 
-    # Find the start of the roster list in the text
-    roster_start_marker = "Which leaves you with a roster of"
+    # Compile the roster start regex once, outside the loop for efficiency
+    # Using re.VERBOSE for better readability
+    roster_start_pattern = re.compile(r"""
+        .*          # Match any characters before "which"
+        \bwhich\b   # Match the whole word "which"
+        .*          # Match any characters in between
+        \broster\b  # Match the whole word "roster"
+        .*          # Match any characters in between
+        \bof\b      # Match the whole word "of"
+        .*          # Match any characters in between
+        :           # Match the colon character
+    """, re.IGNORECASE | re.VERBOSE)
+
     lines = payload.splitlines()
 
     in_roster_section = False
     for line in lines:
         stripped_line = line.decode().strip()
 
-        if stripped_line.startswith(roster_start_marker):
+        if roster_start_pattern.search(stripped_line):
             in_roster_section = True
             continue # Skip the marker line itself
 

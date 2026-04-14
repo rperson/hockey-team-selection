@@ -119,11 +119,28 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
 
             # Validate the name against the Excel player data
             normalized_clean_name = clean_name.upper()
-            if clean_name and normalized_clean_name in player_data_lookup:
+            if normalized_clean_name in player_data_lookup:
                 player_names.append(clean_name)
             else:
-                # This non-empty line is not a recognized player name, so stop parsing the roster
-                break
+                # This non-empty line is not a recognized player name from the lookup.
+                word_count = len(clean_name.split())
+                has_punctuation = any(char in string.punctuation for char in clean_name)
+
+                # Condition for stopping: looks like a sentence (more than 2 words and with punctuation)
+                if word_count > 2 and has_punctuation:
+                    # Found a sentence-like line, indicating the end of the roster list.
+                    break
+                else:
+                    # This line is not a recognized player and not a sentence-like stopper.
+                    # Treat it as an unrecognized player name and issue a warning.
+                    messagebox.showwarning(
+                        "Unrecognized Roster Entry",
+                        f"The entry '{clean_name}' was found in the roster but not recognized as a player "
+                        "from your player data file. This entry will be skipped for team balancing. "
+                        "Please ensure all roster entries are valid player names listed in your Excel player data file."
+                    )
+                    # Continue to the next line, skipping this unrecognized entry.
+                    continue
 
     if not player_names:
         raise ValueError("Could not find the player roster in the EML file or it was empty.")

@@ -9,6 +9,7 @@ import email
 from email.message import EmailMessage # Added
 from email import policy
 import re
+import string
 
 
 # -----------------------------

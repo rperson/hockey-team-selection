@@ -19,8 +19,9 @@ import string
 @dataclass
 class Player:
     name: str
-    rank: int
-    position: str
+    rank: int # The player's skill rank
+    position: str # "F", "D", or "FLEX" (or "?" for unrecognized players)
+    is_unrecognized: bool = False # New field to mark players not found in the Excel data
 
 
 # -----------------------------
@@ -66,6 +67,7 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
     Parses an EML file to extract the list of player names from the final roster section.
     Names are validated against the provided player_data_lookup from the Excel file.
     """
+    unrecognized_player_names = [] # List to store names not found in player_data_lookup
     with open(eml_file_path, 'rb') as fp: # type: ignore
         msg: EmailMessage = email.message_from_binary_file(fp, policy=policy.default)
 
@@ -122,7 +124,8 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
             if normalized_clean_name in player_data_lookup:
                 player_names.append(clean_name)
             else:
-                # This non-empty line is not a recognized player name from the lookup.
+                # This non-empty line is not a recognized player name from the lookup,
+                # but it might be the end of the roster.
                 word_count = len(clean_name.split())
                 has_punctuation = any(char in string.punctuation for char in clean_name)
 
@@ -130,22 +133,15 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
                 if word_count > 2 and has_punctuation:
                     # Found a sentence-like line, indicating the end of the roster list.
                     break
-                else:
-                    # This line is not a recognized player and not a sentence-like stopper.
-                    # Treat it as an unrecognized player name and issue a warning.
-                    messagebox.showwarning(
-                        "Unrecognized Roster Entry",
-                        f"The entry '{clean_name}' was found in the roster but not recognized as a player "
-                        "from your player data file. This entry will be skipped for team balancing. "
-                        "Please ensure all roster entries are valid player names listed in your Excel player data file."
-                    )
-                    # Continue to the next line, skipping this unrecognized entry.
-                    continue
+                
+                # If it's not a recognized player and not a stopper, add to unrecognized list
+                unrecognized_player_names.append(clean_name)
+                continue # Continue to the next line, skipping this unrecognized entry for now
 
-    if not player_names:
-        raise ValueError("Could not find the player roster in the EML file or it was empty.")
+    if not player_names and not unrecognized_player_names:
+        raise ValueError("No player names (recognized or unrecognized) extracted from the EML file.")
 
-    return player_names
+    return player_names, unrecognized_player_names
 
 def assign_player(team, player, pos):
     team[pos].append(player)
@@ -243,14 +239,15 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
         for _, row in df_players.iterrows()
     }
 
-    # 1. Get player names from EML roster file, validating against the Excel data
-    eml_player_names = extract_players_from_eml(roster_eml_path, player_data_lookup)
-    if not eml_player_names:
-        raise ValueError("No player names extracted from the EML roster.")
+    # 1. Get player names from EML roster file, separating recognized from unrecognized
+    eml_recognized_player_names, eml_unrecognized_player_names = extract_players_from_eml(roster_eml_path, player_data_lookup)
+    if not eml_recognized_player_names and not eml_unrecognized_player_names:
+        raise ValueError("No player names (recognized or unrecognized) extracted from the EML roster.")
 
     # 3. Construct Player objects for the game night roster
     players_for_tonight = []
-    for name_from_eml in eml_player_names:
+    # Add recognized players
+    for name_from_eml in eml_recognized_player_names:
         normalized_name_eml = name_from_eml.strip().upper()
         if normalized_name_eml in player_data_lookup:
             data = player_data_lookup[normalized_name_eml]
@@ -258,12 +255,20 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
                 Player(
                     name=name_from_eml, # Use original casing for display purposes
                     rank=data["rank"],
-                    position=data["position"]
+                    position=data["position"],
+                    is_unrecognized=False
                 )
             )
         else:
             raise ValueError(
-                f"Player '{name_from_eml}' from EML roster was not found in the player data Excel file."
+                f"Player '{name_from_eml}' from EML roster was not found in the player data Excel file (unexpected error, "
+                "should have been caught as unrecognized)."
+            )
+    
+    # Add unrecognized players with default rank 0 and '?' position
+    for name_from_eml in eml_unrecognized_player_names:
+        players_for_tonight.append(
+            Player(name=name_from_eml, rank=0, position="?", is_unrecognized=True)
             )
 
     if len(players_for_tonight) < 10:
@@ -311,35 +316,35 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
         else:
             chosen_team = team_b_final
 
-        # Add the player to their primary position or 'F' if FLEX
-        if median_player_removed.position == "D":
+        # Add the player to their primary position or 'F' if FLEX or '?'
+        if median_player_removed.position == "D" and len(chosen_team["D"]) < DEFENCE_TARGET:
             chosen_team["D"].append(median_player_removed)
-        else:  # "F" or "FLEX"
+        else:  # "F", "FLEX", or "?" (or if D is full)
             chosen_team["F"].append(median_player_removed)
 
         chosen_team["total"] += median_player_removed.rank
 
-        return team_a_final, team_b_final, abs(team_a_final["total"] - team_b_final["total"])
-    else:
-        return best[0], best[1], best_diff
+        return team_a_final, team_b_final, abs(team_a_final["total"] - team_b_final["total"]), eml_unrecognized_player_names
+    else: # No median player removed
+        return best[0], best[1], best_diff, eml_unrecognized_player_names
 
 
 # -----------------------------
 # Export Workbook
 # -----------------------------
 
-def export_workbook(team_a, team_b, diff):
+def export_workbook(team_a, team_b, diff, unrecognized_players_list):
 
     def build_df(team, jersey):
 
         rows = []
 
         for pos in ["F", "D"]:
-            for p in team[pos]:
+            for p in team[pos]: # p is a Player object
                 rows.append({
                     "Name": p.name,
                     "Rank": p.rank,
-                    "Position": pos,
+                    "Position": "?" if p.is_unrecognized else p.position, # Output '?' for unrecognized players
                     "Jersey": jersey
                 })
 
@@ -363,6 +368,16 @@ def export_workbook(team_a, team_b, diff):
 
     df_summary = pd.DataFrame(summary)
 
+    # Add unrecognized players to the summary if any
+    if unrecognized_players_list:
+        missing_players_str = ", ".join(unrecognized_players_list)
+        df_summary = pd.concat([
+            df_summary,
+            pd.DataFrame({
+                "Metric": ["Unrecognized Players"],
+                "Value": [missing_players_str]
+            })
+        ], ignore_index=True)
     with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
 
         df_light.to_excel(writer, sheet_name=TEAM_A_NAME, index=False)
@@ -416,17 +431,25 @@ def generate_teams():
         if eml_file_path == "No EML file selected" or player_data_xlsx_path == "No player data file selected":
             raise ValueError("Please select both the EML roster file and the player data Excel file.")
 
-        team_a, team_b, diff = build_teams(eml_file_path, player_data_xlsx_path)
-        export_workbook(team_a, team_b, diff)
+        team_a, team_b, diff, unrecognized_players = build_teams(eml_file_path, player_data_xlsx_path)
+        export_workbook(team_a, team_b, diff, unrecognized_players)
 
-        status_label.config(
-            text=f"✔ Teams Created Successfully!\nSkill Difference: {diff}",
-            fg="green"
-        )
+        status_message = f"✔ Teams Created Successfully!\nSkill Difference: {diff}"
+        if unrecognized_players:
+            status_message += f"\n(Some players were unrecognized - see Summary sheet)"
+            status_label.config(text=status_message, fg="orange") # Use orange to indicate warnings
+            messagebox.showwarning(
+                "Unrecognized Players",
+                "The following players were found in the roster but not recognized "
+                "from your player data file and were added with a rank of 0 and position '?':\n\n" +
+                "\n".join(unrecognized_players) +
+                "\n\nPlease ensure their names are correctly listed in your player data Excel file if you wish them to be fully recognized."
+            )
+        else:
+            status_label.config(text=status_message, fg="green")
 
         messagebox.showinfo(
-            "Success",
-            f"Workbook created:\n{OUTPUT_FILE}"
+            "Success", f"Workbook created:\n{OUTPUT_FILE}"
         )
 
     except Exception as e:

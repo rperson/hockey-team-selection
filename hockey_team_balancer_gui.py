@@ -221,7 +221,7 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
     and looking up their rank/position from an Excel player data file.
     """
     # 2. Read player data (ranks and positions) from the Excel file
-    df_players = pd.read_excel(player_data_xlsx_path, dtype={"Name": str, "Rank": int, "Position": str})
+    df_players = pd.read_excel(player_data_xlsx_path, dtype={"Name": str, "Rank": int, "Position": str, "Selected": bool})
 
     required_columns_xlsx = {"Name", "Rank", "Position"}
 

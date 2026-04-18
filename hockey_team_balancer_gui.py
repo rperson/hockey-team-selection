@@ -3,7 +3,13 @@ import random
 from dataclasses import dataclass
 from copy import deepcopy
 import tkinter as tk
+from typing import cast
 from tkinter import filedialog, messagebox
+import email
+from email.message import EmailMessage # Added
+from email import policy
+import re
+import string
 
 
 # -----------------------------
@@ -13,8 +19,9 @@ from tkinter import filedialog, messagebox
 @dataclass
 class Player:
     name: str
-    rank: int
-    position: str
+    rank: int # The player's skill rank
+    position: str # "F", "D", or "FLEX" (or "?" for unrecognized players)
+    is_unrecognized: bool = False # New field to mark players not found in the Excel data
 
 
 # -----------------------------
@@ -55,6 +62,86 @@ def can_add(team, pos):
         return len(team["D"]) < DEFENCE_TARGET
     return False
 
+def extract_players_from_eml(eml_file_path, player_data_lookup):
+    """
+    Parses an EML file to extract the list of player names from the final roster section.
+    Names are validated against the provided player_data_lookup from the Excel file.
+    """
+    unrecognized_player_names = [] # List to store names not found in player_data_lookup
+    with open(eml_file_path, 'rb') as fp: # type: ignore
+        msg: EmailMessage = email.message_from_binary_file(fp, policy=policy.default)
+
+    player_names = []
+    payload = ""
+
+    # Attempt to get the plain text part of the email
+    if msg.is_multipart():
+        for part in msg.iter_parts():
+            if part.get_content_type() == 'text/plain':
+                payload = part.get_payload(decode=True)
+                break
+        else:
+            raise ValueError("No plain text part found in the EML file.")
+    else:
+        if msg.get_content_type() == 'text/plain':
+            payload = msg.get_payload(decode=True)
+        else:
+            raise ValueError("EML file is not plain text or multipart with a plain text part.")
+
+    # Compile the roster start regex once, outside the loop for efficiency
+    # Using re.VERBOSE for better readability
+    roster_start_pattern = re.compile(r"""
+        .*          # Match any characters before "which"
+        \bwhich\b   # Match the whole word "which"
+        .*          # Match any characters in between
+        \broster\b  # Match the whole word "roster"
+        .*          # Match any characters in between
+        \bof\b      # Match the whole word "of"
+        .*          # Match any characters in between
+        :           # Match the colon character
+    """, re.IGNORECASE | re.VERBOSE)
+
+    lines = payload.splitlines()
+
+    in_roster_section = False
+    for line in lines:
+        stripped_line = line.decode().strip()
+
+        if roster_start_pattern.search(stripped_line):
+            in_roster_section = True
+            continue # Skip the marker line itself
+
+        if in_roster_section:
+            if not stripped_line:
+                # Allow blank lines within the roster section
+                continue
+
+            # Clean up potential extra spaces or non-breaking spaces
+            clean_name = re.sub(r'[\s\xa0]+', ' ', stripped_line).strip()
+
+            # Validate the name against the Excel player data
+            normalized_clean_name = clean_name.upper()
+            if normalized_clean_name in player_data_lookup:
+                player_names.append(clean_name)
+            else:
+                # This non-empty line is not a recognized player name from the lookup,
+                # but it might be the end of the roster.
+                word_count = len(clean_name.split())
+                has_punctuation = any(char in string.punctuation for char in clean_name)
+
+                # Condition for stopping: looks like a sentence (more than 2 words and with punctuation)
+                if word_count > 2 and has_punctuation:
+                    # Found a sentence-like line, indicating the end of the roster list.
+                    break
+
+                # If it's not a recognized player and not a stopper, add to unrecognized list
+                unrecognized_player_names.append(clean_name)
+                continue # Continue to the next line, skipping this unrecognized entry for now
+
+    if not player_names and not unrecognized_player_names:
+        raise ValueError("No player names (recognized or unrecognized) extracted from the EML file.")
+
+    return player_names, unrecognized_player_names
 
 def assign_player(team, player, pos):
     team[pos].append(player)
@@ -100,7 +187,7 @@ def attempt_build(players_list):
                 (team_b, "D")
             ]
 
-        best_move = None
+        best_move = (None, None)
         best_diff = float("inf")
 
         for team, pos in options:
@@ -128,39 +215,87 @@ def attempt_build(players_list):
 # Run Full Build
 # -----------------------------
 
-def build_teams(input_file):
+def build_teams(roster_eml_path, player_data_xlsx_path):
+    """
+    Builds balanced teams by extracting player names from an EML roster file
+    and looking up their rank/position from an Excel player data file.
+    """
+    # 2. Read player data (ranks and positions) from the Excel file
+    df_players = pd.read_excel(player_data_xlsx_path, dtype={"Name": str, "Rank": int, "Position": str})
 
-    df = pd.read_excel(input_file)
+    required_columns_xlsx = {"Name", "Rank", "Position"}
 
-    required_columns = {"Selected", "Name", "Rank", "Position"}
-
-    if not required_columns.issubset(df.columns):
-        raise ValueError("Excel must contain Selected, Name, Rank, Position")
-
-    players = []
-
-    for _, row in df.iterrows():
-
-        if not is_selected(row["Selected"]):
-            continue
-
-        players.append(
-            Player(
-                name=row["Name"],
-                rank=int(row["Rank"]),
-                position=row["Position"].strip().upper()
-            )
+    if not required_columns_xlsx.issubset(df_players.columns):
+        raise ValueError(
+            f"Player data Excel file must contain '{', '.join(required_columns_xlsx)}' columns."
         )
 
-    if len(players) < 10:
-        raise ValueError("Not enough selected players")
+    # Create a lookup dictionary for player data for efficient access
+    player_data_lookup = {
+        cast(str, row["Name"]).strip().upper(): {
+            "rank": int(cast(int, row["Rank"])),
+            "position": cast(str, row["Position"]).strip().upper(),
+        }
+        for _, row in df_players.iterrows()
+    }
 
-    best = None
+    # 1. Get player names from EML roster file, separating recognized from unrecognized
+    eml_recognized_player_names, eml_unrecognized_player_names = extract_players_from_eml(roster_eml_path, player_data_lookup)
+    if not eml_recognized_player_names and not eml_unrecognized_player_names:
+        raise ValueError("No player names (recognized or unrecognized) extracted from the EML roster.")
+
+    # 3. Construct Player objects for the game night roster
+    players_for_tonight = []
+    # Add recognized players
+    for name_from_eml in eml_recognized_player_names:
+        normalized_name_eml = name_from_eml.strip().upper()
+        if normalized_name_eml in player_data_lookup:
+            data = player_data_lookup[normalized_name_eml]
+            players_for_tonight.append(
+                Player(
+                    name=name_from_eml, # Use original casing for display purposes
+                    rank=data["rank"],
+                    position=data["position"],
+                    is_unrecognized=False
+                )
+            )
+        else:
+            raise ValueError(
+                f"Player '{name_from_eml}' from EML roster was not found in the player data Excel file (unexpected error, "
+                "should have been caught as unrecognized)."
+            )
+
+    # Add unrecognized players with default rank 0 and '?' position
+    for name_from_eml in eml_unrecognized_player_names:
+        players_for_tonight.append(
+            Player(name=name_from_eml, rank=0, position="?", is_unrecognized=True)
+            )
+
+    if len(players_for_tonight) < 10:
+        raise ValueError("Not enough selected players for team balancing (minimum 10 needed).")
+
+    players_to_balance = players_for_tonight.copy()
+    median_player_removed = None
+
+    # If there's an odd number of players, remove a median-ranked player
+    # This list must be modified *before* passing to attempt_build
+    if len(players_to_balance) % 2 != 0:
+        # Sort players by rank to find the median. If two are in the middle, pick one.
+        # Using copy() for sorting to avoid modifying players_to_balance in place unnecessarily
+        # if we only need the sorted list for median finding, but pop() requires in-place.
+        # So, we sort `players_to_balance` directly and pop from it.
+        players_to_balance.sort(key=lambda p: p.rank)
+        median_index = len(players_to_balance) // 2
+        # Remove the median player and store them for later re-addition
+        # This reduces players_to_balance to an even number of players
+        median_player_removed = players_to_balance.pop(median_index)
+
+    best = (None, None)
     best_diff = float("inf")
 
     for _ in range(ITERATIONS):
-
-        a, b = attempt_build(players.copy())
+        # Pass the list of players constructed from EML names and XLSX data
+        a, b = attempt_build(players_to_balance.copy())
         diff = abs(a["total"] - b["total"])
 
         if diff < best_diff:
@@ -170,25 +305,46 @@ def build_teams(input_file):
         if best_diff == 0:
             break
 
-    return best[0], best[1], best_diff
+    # Re-add the median player if one was removed
+    if median_player_removed: # This condition is true if a player was removed earlier
+        team_a_final = best[0]
+        team_b_final = best[1]
+
+        # Randomly assign the median player to one of the teams
+        if random.choice([True, False]):
+            chosen_team = team_a_final
+        else:
+            chosen_team = team_b_final
+
+        # Add the player to their primary position or 'F' if FLEX or '?'
+        if median_player_removed.position == "D" and len(chosen_team["D"]) < DEFENCE_TARGET:
+            chosen_team["D"].append(median_player_removed)
+        else:  # "F", "FLEX", or "?" (or if D is full)
+            chosen_team["F"].append(median_player_removed)
+
+        chosen_team["total"] += median_player_removed.rank
+
+        return team_a_final, team_b_final, abs(team_a_final["total"] - team_b_final["total"]), eml_unrecognized_player_names
+    else: # No median player removed
+        return best[0], best[1], best_diff, eml_unrecognized_player_names
 
 
 # -----------------------------
 # Export Workbook
 # -----------------------------
 
-def export_workbook(team_a, team_b, diff):
+def export_workbook(team_a, team_b, diff, unrecognized_players_list):
 
     def build_df(team, jersey):
 
         rows = []
 
         for pos in ["F", "D"]:
-            for p in team[pos]:
+            for p in team[pos]: # p is a Player object
                 rows.append({
                     "Name": p.name,
                     "Rank": p.rank,
-                    "Position": pos,
+                    "Position": "?" if p.is_unrecognized else p.position, # Output '?' for unrecognized players
                     "Jersey": jersey
                 })
 
@@ -212,6 +368,16 @@ def export_workbook(team_a, team_b, diff):
 
     df_summary = pd.DataFrame(summary)
 
+    # Add unrecognized players to the summary if any
+    if unrecognized_players_list:
+        missing_players_str = ", ".join(unrecognized_players_list)
+        df_summary = pd.concat([
+            df_summary,
+            pd.DataFrame({
+                "Metric": ["Unrecognized Players"],
+                "Value": [missing_players_str]
+            })
+        ], ignore_index=True)
     with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
 
         df_light.to_excel(writer, sheet_name=TEAM_A_NAME, index=False)
@@ -223,35 +389,70 @@ def export_workbook(team_a, team_b, diff):
 # GUI
 # -----------------------------
 
-def select_file():
+def update_generate_button_state():
+    """Enables the generate button only when both EML and XLSX files are selected."""
+    eml_selected = eml_file_label.cget("text") != "No EML file selected"
+    xlsx_selected = player_data_file_label.cget("text") != "No player data file selected"
+    if eml_selected and xlsx_selected:
+        generate_button.config(state="normal")
+    else:
+        generate_button.config(state="disabled")
+
+def select_eml_file():
+    """Opens a file dialog for selecting the EML roster file."""
     file_path = filedialog.askopenfilename(
+        title="Select Roster EML File",
+        filetypes=[("EML Files", "*.eml")]
+    )
+    if file_path:
+        eml_file_label.config(text=file_path)
+        update_generate_button_state()
+
+def select_player_data_file():
+    """Opens a file dialog for selecting the player data Excel file."""
+    file_path = filedialog.askopenfilename(
+        title="Select Player Data Excel File",
         filetypes=[("Excel Files", "*.xlsx")]
     )
     if file_path:
-        file_label.config(text=file_path)
-        generate_button.config(state="normal")
+        player_data_file_label.config(text=file_path)
+        update_generate_button_state()
 
 
 def generate_teams():
-
+    """
+    Triggers the team generation process using the selected EML and Excel files.
+    Handles errors and displays success/failure messages.
+    """
     try:
-        input_file = file_label.cget("text")
+        eml_file_path = eml_file_label.cget("text")
+        player_data_xlsx_path = player_data_file_label.cget("text")
 
-        team_a, team_b, diff = build_teams(input_file)
-        export_workbook(team_a, team_b, diff)
+        if eml_file_path == "No EML file selected" or player_data_xlsx_path == "No player data file selected":
+            raise ValueError("Please select both the EML roster file and the player data Excel file.")
 
-        status_label.config(
-            text=f"✔ Teams Created Successfully!\nSkill Difference: {diff}",
-            fg="green"
-        )
+        team_a, team_b, diff, unrecognized_players = build_teams(eml_file_path, player_data_xlsx_path)
+        export_workbook(team_a, team_b, diff, unrecognized_players)
+
+        status_message = f"✔ Teams Created Successfully!\nSkill Difference: {diff}"
+        if unrecognized_players:
+            status_message += f"\n(Some players were unrecognized - see Summary sheet)"
+            status_label.config(text=status_message, fg="orange") # Use orange to indicate warnings
+            messagebox.showwarning(
+                "Unrecognized Players",
+                "The following players were found in the roster but not recognized "
+                "from your player data file and were added with a rank of 0 and position '?':\n\n" +
+                "\n".join(unrecognized_players) +
+                "\n\nPlease ensure their names are correctly listed in your player data Excel file if you wish them to be fully recognized."
+            )
+        else:
+            status_label.config(text=status_message, fg="green")
 
         messagebox.showinfo(
-            "Success",
-            f"Workbook created:\n{OUTPUT_FILE}"
+            "Success", f"Workbook created:\n{OUTPUT_FILE}"
         )
 
     except Exception as e:
-
         status_label.config(text="❌ Error Occurred", fg="red")
         messagebox.showerror("Error", str(e))
 
@@ -262,17 +463,24 @@ def generate_teams():
 
 root = tk.Tk()
 root.title("Hockey Team Balancer")
-root.geometry("460x300")
+# Increase window size to accommodate new elements
+root.geometry("460x400") # Original was 460x300
 root.resizable(False, False)
 
 title = tk.Label(root, text="🏒 Hockey Team Balancer", font=("Arial", 16, "bold"))
 title.pack(pady=10)
 
-select_button = tk.Button(root, text="Select Excel File", command=select_file, width=25)
-select_button.pack(pady=5)
+# EML File Selection Components
+select_eml_button = tk.Button(root, text="Select Roster EML File", command=select_eml_file, width=30)
+select_eml_button.pack(pady=5)
+eml_file_label = tk.Label(root, text="No EML file selected", wraplength=420)
+eml_file_label.pack(pady=2)
 
-file_label = tk.Label(root, text="No file selected", wraplength=420)
-file_label.pack(pady=5)
+# Player Data XLSX File Selection Components
+select_player_data_button = tk.Button(root, text="Select Player Data Excel File", command=select_player_data_file, width=30)
+select_player_data_button.pack(pady=5)
+player_data_file_label = tk.Label(root, text="No player data file selected", wraplength=420)
+player_data_file_label.pack(pady=2)
 
 generate_button = tk.Button(
     root,

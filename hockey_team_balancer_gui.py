@@ -479,6 +479,9 @@ def export_workbook(team_a, team_b, diff, unrecognized_players_list):
         # ADD THE FOLLOWING LINE to set the print area for the "Teams" sheet:
         ws_teams.print_area = f"A1:B{max_rows}"
 
+        # ADD THIS NEW LINE to set the page orientation to landscape:
+        ws_teams.page_setup.orientation = ws_teams.ORIENTATION_LANDSCAPE
+
 
 # -----------------------------
 # GUI

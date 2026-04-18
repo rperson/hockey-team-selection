@@ -465,9 +465,9 @@ def export_workbook(team_a, team_b, diff, unrecognized_players_list):
                     # These factors are heuristics to approximate visible width in Excel.
                     col_letter = cell.column_letter
                     if cell.row == 1: # Header row (28pt bold)
-                        width_estimate = len(str(cell.value)) * 1.6
+                        width_estimate = len(str(cell.value)) * 3.0
                     else: # Player names (22pt)
-                        width_estimate = len(str(cell.value)) * 1.2
+                        width_estimate = len(str(cell.value)) * 2.5
 
                     current_max = column_widths.get(col_letter, 0)
                     column_widths[col_letter] = max(current_max, width_estimate)

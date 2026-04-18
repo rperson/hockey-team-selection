@@ -245,14 +245,14 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
     if not eml_recognized_player_names and not eml_unrecognized_player_names:
         raise ValueError("No player names (recognized or unrecognized) extracted from the EML roster.")
 
-    # 3. Construct Player objects for the game night roster
-    players_for_tonight = []
-    # Add recognized players
+    # --- Phase 1: Prepare recognized and unrecognized player objects ---
+    recognized_players_for_tonight = []
+    # Create Player objects for recognized players
     for name_from_eml in eml_recognized_player_names:
         normalized_name_eml = name_from_eml.strip().upper()
         if normalized_name_eml in player_data_lookup:
             data = player_data_lookup[normalized_name_eml]
-            players_for_tonight.append(
+            recognized_players_for_tonight.append(
                 Player(
                     name=name_from_eml, # Use original casing for display purposes
                     rank=data["rank"],
@@ -261,73 +261,98 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
                 )
             )
         else:
+            # This should ideally not happen if extract_players_from_eml works as expected
+            # and correctly filters names against player_data_lookup.
             raise ValueError(
                 f"Player '{name_from_eml}' from EML roster was not found in the player data Excel file (unexpected error, "
                 "should have been caught as unrecognized)."
             )
 
-    # Add unrecognized players with default rank 0 and '?' position
+    unrecognized_player_objects = []
+    # Create Player objects for unrecognized players with default rank 0 and '?' position
     for name_from_eml in eml_unrecognized_player_names:
-        players_for_tonight.append(
+        unrecognized_player_objects.append(
             Player(name=name_from_eml, rank=0, position="?", is_unrecognized=True)
             )
 
-    if len(players_for_tonight) < 10:
+    if len(recognized_players_for_tonight) + len(unrecognized_player_objects) < 10:
         raise ValueError("Not enough selected players for team balancing (minimum 10 needed).")
 
-    players_to_balance = players_for_tonight.copy()
-    median_player_removed = None
+    # --- Phase 2: Balance recognized players based on skill ---
 
-    # If there's an odd number of players, remove a median-ranked player
-    # This list must be modified *before* passing to attempt_build
-    if len(players_to_balance) % 2 != 0:
-        # Sort players by rank to find the median. If two are in the middle, pick one.
-        # Using copy() for sorting to avoid modifying players_to_balance in place unnecessarily
-        # if we only need the sorted list for median finding, but pop() requires in-place.
-        # So, we sort `players_to_balance` directly and pop from it.
-        players_to_balance.sort(key=lambda p: p.rank)
-        median_index = len(players_to_balance) // 2
-        # Remove the median player and store them for later re-addition
-        # This reduces players_to_balance to an even number of players
-        median_player_removed = players_to_balance.pop(median_index)
+    # Prepare recognized players for the balancing algorithm
+    recognized_players_to_balance = recognized_players_for_tonight.copy()
+    median_recognized_player_removed = None
 
-    best = (None, None)
-    best_diff = float("inf")
+    # If there's an odd number of recognized players, remove a median-ranked player
+    if len(recognized_players_to_balance) % 2 != 0:
+        recognized_players_to_balance.sort(key=lambda p: p.rank)
+        median_index = len(recognized_players_to_balance) // 2
+        median_recognized_player_removed = recognized_players_to_balance.pop(median_index)
 
+    best_recognized_teams = (None, None)
+    best_diff_recognized = float("inf")
+
+    # Run optimizer for recognized players only
     for _ in range(ITERATIONS):
-        # Pass the list of players constructed from EML names and XLSX data
-        a, b = attempt_build(players_to_balance.copy())
-        diff = abs(a["total"] - b["total"])
+        # Create a copy to ensure each iteration starts with the same player pool
+        a_rec, b_rec = attempt_build(recognized_players_to_balance.copy())
+        diff_rec = abs(a_rec["total"] - b_rec["total"])
 
-        if diff < best_diff:
-            best_diff = diff
-            best = (deepcopy(a), deepcopy(b))
+        if diff_rec < best_diff_recognized:
+            best_diff_recognized = diff_rec
+            best_recognized_teams = (deepcopy(a_rec), deepcopy(b_rec))
 
-        if best_diff == 0:
+        if best_diff_recognized == 0:
             break
 
-    # Re-add the median player if one was removed
-    if median_player_removed: # This condition is true if a player was removed earlier
-        team_a_final = best[0]
-        team_b_final = best[1]
+    final_team_a = best_recognized_teams[0]
+    final_team_b = best_recognized_teams[1]
 
-        # Randomly assign the median player to one of the teams
+    # Re-add the median recognized player if one was removed
+    if median_recognized_player_removed:
         if random.choice([True, False]):
-            chosen_team = team_a_final
+            chosen_team = final_team_a
         else:
-            chosen_team = team_b_final
+            chosen_team = final_team_b
 
-        # Add the player to their primary position or 'F' if FLEX or '?'
-        if median_player_removed.position == "D" and len(chosen_team["D"]) < DEFENCE_TARGET:
-            chosen_team["D"].append(median_player_removed)
-        else:  # "F", "FLEX", or "?" (or if D is full)
-            chosen_team["F"].append(median_player_removed)
+        # Add the player to their primary position or 'F' if FLEX
+        if median_recognized_player_removed.position == "D" and len(chosen_team["D"]) < DEFENCE_TARGET:
+            chosen_team["D"].append(median_recognized_player_removed)
+        else:  # "F", "FLEX", or if D is full
+            chosen_team["F"].append(median_recognized_player_removed)
 
-        chosen_team["total"] += median_player_removed.rank
+        chosen_team["total"] += median_recognized_player_removed.rank # Update total rank
 
-        return team_a_final, team_b_final, abs(team_a_final["total"] - team_b_final["total"]), eml_unrecognized_player_names
-    else: # No median player removed
-        return best[0], best[1], best_diff, eml_unrecognized_player_names
+    # --- Phase 3: Distribute unrecognized players to balance total player count ---
+
+    # Shuffle unrecognized players to ensure random distribution if counts are equal
+    random.shuffle(unrecognized_player_objects)
+
+    for unrec_player in unrecognized_player_objects:
+        len_a = len(final_team_a["F"]) + len(final_team_a["D"])
+        len_b = len(final_team_b["F"]) + len(final_team_b["D"])
+
+        # Prioritize adding to the team with fewer players overall
+        if len_a <= len_b:
+            # Try to add to 'F' first if not full based on target, else 'D', else 'F' over capacity
+            if len(final_team_a["F"]) < FORWARDS_TARGET:
+                final_team_a["F"].append(unrec_player)
+            elif len(final_team_a["D"]) < DEFENCE_TARGET:
+                final_team_a["D"].append(unrec_player)
+            else: # Both positions might be 'full' according to target, just add to 'F' as a default
+                final_team_a["F"].append(unrec_player)
+        else: # Team B has fewer players
+            if len(final_team_b["F"]) < FORWARDS_TARGET:
+                final_team_b["F"].append(unrec_player)
+            elif len(final_team_b["D"]) < DEFENCE_TARGET:
+                final_team_b["D"].append(unrec_player)
+            else:
+                final_team_b["F"].append(unrec_player)
+        # IMPORTANT: Do NOT update team["total"] for unrecognized players as their rank is 0.
+        # The total rank difference (best_diff_recognized) should only reflect recognized players.
+
+    return final_team_a, final_team_b, best_diff_recognized, eml_unrecognized_player_names
 
 
 # -----------------------------

@@ -476,6 +476,9 @@ def export_workbook(team_a, team_b, diff, unrecognized_players_list):
             # Add a small padding and then increase width by approximately 30%
             ws_teams.column_dimensions[col_letter].width = (width + 2) * 1.3
 
+        # ADD THE FOLLOWING LINE to set the print area for the "Teams" sheet:
+        ws_teams.print_area = f"A1:B{max_rows}"
+
 
 # -----------------------------
 # GUI

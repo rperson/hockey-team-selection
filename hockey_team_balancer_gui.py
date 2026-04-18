@@ -456,9 +456,25 @@ def export_workbook(team_a, team_b, diff, unrecognized_players_list):
             for cell in row:
                 cell.border = thin_border
 
-        # Adjust column widths for better readability
-        ws_teams.column_dimensions['A'].width = 25
-        ws_teams.column_dimensions['B'].width = 25
+        # Adjust column widths for better readability (auto-fit)
+        column_widths = {}
+        for row in ws_teams.iter_rows(min_row=1, max_row=max_rows, min_col=1, max_col=2):
+            for cell in row:
+                if cell.value:
+                    # Estimate width based on character count and font size.
+                    # These factors are heuristics to approximate visible width in Excel.
+                    col_letter = cell.column_letter
+                    if cell.row == 1: # Header row (28pt bold)
+                        width_estimate = len(str(cell.value)) * 1.6
+                    else: # Player names (22pt)
+                        width_estimate = len(str(cell.value)) * 1.2
+
+                    current_max = column_widths.get(col_letter, 0)
+                    column_widths[col_letter] = max(current_max, width_estimate)
+
+        for col_letter, width in column_widths.items():
+            # Add a small padding to ensure text isn't cramped
+            ws_teams.column_dimensions[col_letter].width = width + 2
 
 
 # -----------------------------

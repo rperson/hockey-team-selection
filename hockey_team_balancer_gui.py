@@ -10,6 +10,7 @@ from email.message import EmailMessage # Added
 from email import policy
 import re
 import string
+from openpyxl.styles import Font, Alignment, Border, Side
 
 
 # -----------------------------
@@ -383,6 +384,56 @@ def export_workbook(team_a, team_b, diff, unrecognized_players_list):
         df_light.to_excel(writer, sheet_name=TEAM_A_NAME, index=False)
         df_dark.to_excel(writer, sheet_name=TEAM_B_NAME, index=False)
         df_summary.to_excel(writer, sheet_name="Summary", index=False)
+
+        # ----------------------------------------------------
+        # New "Teams" sheet with player names and styling
+        # ----------------------------------------------------
+        ws_teams = writer.book.create_sheet("Teams")
+
+        # Set headers
+        ws_teams['A1'] = TEAM_A_NAME
+        ws_teams['B1'] = TEAM_B_NAME
+
+        # Define styles
+        header_font = Font(name='Comic Sans MS', size=28, bold=True)
+        player_font = Font(name='Comic Sans MS', size=22)
+        center_alignment = Alignment(horizontal='center', vertical='center')
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+
+        # Apply header styles
+        ws_teams['A1'].font = header_font
+        ws_teams['A1'].alignment = center_alignment
+        ws_teams['B1'].font = header_font
+        ws_teams['B1'].alignment = center_alignment
+
+        # Collect and sort player names for each team
+        all_players_a = sorted([p.name for p in team_a["F"] + team_a["D"]])
+        all_players_b = sorted([p.name for p in team_b["F"] + team_b["D"]])
+
+        # Populate player names and apply styles
+        max_rows = max(len(all_players_a), len(all_players_b)) + 1 # +1 for header row
+
+        for i, name in enumerate(all_players_a):
+            cell_a = ws_teams.cell(row=i+2, column=1, value=name)
+            cell_a.font = player_font
+
+        for i, name in enumerate(all_players_b):
+            cell_b = ws_teams.cell(row=i+2, column=2, value=name)
+            cell_b.font = player_font
+
+        # Apply borders to the entire populated range
+        for row in ws_teams.iter_rows(min_row=1, max_row=max_rows, min_col=1, max_col=2):
+            for cell in row:
+                cell.border = thin_border
+
+        # Adjust column widths for better readability
+        ws_teams.column_dimensions['A'].width = 25
+        ws_teams.column_dimensions['B'].width = 25
 
 
 # -----------------------------

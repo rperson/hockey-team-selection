@@ -473,8 +473,8 @@ def export_workbook(team_a, team_b, diff, unrecognized_players_list):
                     column_widths[col_letter] = max(current_max, width_estimate)
 
         for col_letter, width in column_widths.items():
-            # Add a small padding to ensure text isn't cramped
-            ws_teams.column_dimensions[col_letter].width = width + 2
+            # Add a small padding and then increase width by approximately 30%
+            ws_teams.column_dimensions[col_letter].width = (width + 2) * 1.3
 
 
 # -----------------------------

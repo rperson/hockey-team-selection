@@ -133,7 +133,7 @@ def extract_players_from_eml(eml_file_path, player_data_lookup):
                 if word_count > 2 and has_punctuation:
                     # Found a sentence-like line, indicating the end of the roster list.
                     break
-                
+
                 # If it's not a recognized player and not a stopper, add to unrecognized list
                 unrecognized_player_names.append(clean_name)
                 continue # Continue to the next line, skipping this unrecognized entry for now
@@ -221,7 +221,7 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
     and looking up their rank/position from an Excel player data file.
     """
     # 2. Read player data (ranks and positions) from the Excel file
-    df_players = pd.read_excel(player_data_xlsx_path, dtype={"Name": str, "Rank": int, "Position": str, "Selected": bool})
+    df_players = pd.read_excel(player_data_xlsx_path, dtype={"Name": str, "Rank": int, "Position": str})
 
     required_columns_xlsx = {"Name", "Rank", "Position"}
 
@@ -264,7 +264,7 @@ def build_teams(roster_eml_path, player_data_xlsx_path):
                 f"Player '{name_from_eml}' from EML roster was not found in the player data Excel file (unexpected error, "
                 "should have been caught as unrecognized)."
             )
-    
+
     # Add unrecognized players with default rank 0 and '?' position
     for name_from_eml in eml_unrecognized_player_names:
         players_for_tonight.append(

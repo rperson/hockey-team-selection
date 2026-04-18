@@ -30,12 +30,14 @@ The email will ignore all lines above a line that starts with:
 The email should contain a list of player names (one per line) after that line.
 Blank lines will be ignored.
 
+Players not recognized will be automatically given a rating of 0 and
+position of "?".  They will be added to the teams as evenly as possible, and a warning message will be displayed and put in the summary sheet of the output spreadsheet.
 
 The goal of the program is to select two teams "Dark" and "Light"
 balancing the teams on both the Forward and Defence position based on
-the player ratings
+the player ratings.
 
-In order to use the program you must have selected a minimum of 10 PLayers to be playing
+The program expects a minimum of 10 PLayers to be playing.
 
 The program will output an excel workbook with three tabs
 

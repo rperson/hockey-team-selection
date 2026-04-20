@@ -3,6 +3,7 @@ import random
 from dataclasses import dataclass
 from copy import deepcopy
 import tkinter as tk
+from typing import cast
 from tkinter import filedialog, messagebox
 
 
@@ -100,7 +101,7 @@ def attempt_build(players_list):
                 (team_b, "D")
             ]
 
-        best_move = None
+        best_move = (None, None)
         best_diff = float("inf")
 
         for team, pos in options:
@@ -146,16 +147,16 @@ def build_teams(input_file):
 
         players.append(
             Player(
-                name=row["Name"],
-                rank=int(row["Rank"]),
-                position=row["Position"].strip().upper()
+                name=cast(str, row["Name"]),
+                rank=int(cast(int, row["Rank"])),
+                position=cast(str, row["Position"]).strip().upper()
             )
         )
 
     if len(players) < 10:
         raise ValueError("Not enough selected players")
 
-    best = None
+    best = (None, None)
     best_diff = float("inf")
 
     for _ in range(ITERATIONS):

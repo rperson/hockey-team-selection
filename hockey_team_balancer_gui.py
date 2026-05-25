@@ -22,8 +22,6 @@ class Player:
 # Config
 # -----------------------------
 
-FORWARDS_TARGET = 6
-DEFENCE_TARGET = 4
 ITERATIONS = 7000
 
 TEAM_A_NAME = "Light Team"
@@ -49,12 +47,42 @@ def empty_team():
     return {"F": [], "D": [], "total": 0}
 
 
-def can_add(team, pos):
+def can_add(team, pos, limits):
     if pos == "F":
-        return len(team["F"]) < FORWARDS_TARGET
+        return len(team["F"]) < limits["F"]
     if pos == "D":
-        return len(team["D"]) < DEFENCE_TARGET
+        return len(team["D"]) < limits["D"]
     return False
+
+
+def compute_limits(players):
+    """
+    Dynamically compute per-team slot limits based on actual player counts.
+    For each position group, split as evenly as possible.
+    If odd, team_a gets the extra player.
+    F/D flex players are distributed across both position slots.
+    """
+    f_count = sum(1 for p in players if p.position == "F")
+    d_count = sum(1 for p in players if p.position == "D")
+    flex_count = sum(1 for p in players if p.position == "F/D")
+
+    # Distribute flex players evenly across F and D slots
+    flex_to_f = flex_count // 2
+    flex_to_d = flex_count - flex_to_f
+
+    total_f_slots = f_count + flex_to_f
+    total_d_slots = d_count + flex_to_d
+
+    # Split slots between the two teams; team_a gets the extra if odd
+    a_f = (total_f_slots + 1) // 2
+    b_f = total_f_slots // 2
+    a_d = (total_d_slots + 1) // 2
+    b_d = total_d_slots // 2
+
+    limits_a = {"F": a_f, "D": a_d}
+    limits_b = {"F": b_f, "D": b_d}
+
+    return limits_a, limits_b
 
 
 def assign_player(team, player, pos):
@@ -66,7 +94,7 @@ def assign_player(team, player, pos):
 # Core Optimizer
 # -----------------------------
 
-def attempt_build(players_list):
+def attempt_build(players_list, limits_a, limits_b):
 
     random.shuffle(players_list)
 
@@ -77,29 +105,32 @@ def attempt_build(players_list):
 
         options = []
 
-        for team in [team_a, team_b]:
+        for team, limits in [(team_a, limits_a), (team_b, limits_b)]:
 
             if player.position == "F":
-                if can_add(team, "F"):
+                if can_add(team, "F", limits):
                     options.append((team, "F"))
 
             elif player.position == "D":
-                if can_add(team, "D"):
+                if can_add(team, "D", limits):
                     options.append((team, "D"))
 
             else:  # FLEX
-                if can_add(team, "F"):
+                if can_add(team, "F", limits):
                     options.append((team, "F"))
-                if can_add(team, "D"):
+                if can_add(team, "D", limits):
                     options.append((team, "D"))
 
         if not options:
-            options = [
-                (team_a, "F"),
-                (team_b, "F"),
-                (team_a, "D"),
-                (team_b, "D")
-            ]
+            # Overflow safety: place anywhere with remaining capacity
+            for team, limits in [(team_a, limits_a), (team_b, limits_b)]:
+                for pos in ["F", "D"]:
+                    if can_add(team, pos, limits):
+                        options.append((team, pos))
+
+        if not options:
+            # All slots full (shouldn't happen with correct limits, but be safe)
+            options = [(team_a, "F"), (team_b, "F"), (team_a, "D"), (team_b, "D")]
 
         best_move = (None, None)
         best_diff = float("inf")
@@ -156,12 +187,14 @@ def build_teams(input_file):
     if len(players) < 10:
         raise ValueError("Not enough selected players")
 
+    limits_a, limits_b = compute_limits(players)
+
     best = (None, None)
     best_diff = float("inf")
 
     for _ in range(ITERATIONS):
 
-        a, b = attempt_build(players.copy())
+        a, b = attempt_build(players.copy(), limits_a, limits_b)
         diff = abs(a["total"] - b["total"])
 
         if diff < best_diff:
@@ -171,14 +204,14 @@ def build_teams(input_file):
         if best_diff == 0:
             break
 
-    return best[0], best[1], best_diff
+    return best[0], best[1], best_diff, limits_a, limits_b
 
 
 # -----------------------------
 # Export Workbook
 # -----------------------------
 
-def export_workbook(team_a, team_b, diff):
+def export_workbook(team_a, team_b, diff, limits_a, limits_b):
 
     def build_df(team, jersey):
 
@@ -200,12 +233,24 @@ def export_workbook(team_a, team_b, diff):
 
     summary = {
         "Metric": [
+            "Light Team Forwards",
+            "Light Team Defence",
+            "Light Team Total Players",
             "Light Team Total Rank",
+            "Dark Team Forwards",
+            "Dark Team Defence",
+            "Dark Team Total Players",
             "Dark Team Total Rank",
             "Skill Difference"
         ],
         "Value": [
+            len(team_a["F"]),
+            len(team_a["D"]),
+            len(team_a["F"]) + len(team_a["D"]),
             team_a["total"],
+            len(team_b["F"]),
+            len(team_b["D"]),
+            len(team_b["F"]) + len(team_b["D"]),
             team_b["total"],
             diff
         ]
@@ -238,8 +283,8 @@ def generate_teams():
     try:
         input_file = file_label.cget("text")
 
-        team_a, team_b, diff = build_teams(input_file)
-        export_workbook(team_a, team_b, diff)
+        team_a, team_b, diff, limits_a, limits_b = build_teams(input_file)
+        export_workbook(team_a, team_b, diff, limits_a, limits_b)
 
         status_label.config(
             text=f"✔ Teams Created Successfully!\nSkill Difference: {diff}",

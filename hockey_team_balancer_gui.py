@@ -137,17 +137,42 @@ def can_add(team, pos, limits):
 
 
 def compute_limits(players):
-    f_count  = sum(1 for p in players if p.position == "F")
-    d_count  = sum(1 for p in players if p.position == "D")
-    flex     = sum(1 for p in players if p.position == "F/D")
-    flex_f   = flex // 2
-    flex_d   = flex - flex_f
-    total_f  = f_count + flex_f
-    total_d  = d_count + flex_d
-    return (
-        {"F": (total_f + 1) // 2, "D": (total_d + 1) // 2},
-        {"F": total_f // 2,       "D": total_d // 2}
-    )
+    """
+    Split players into two teams as evenly as possible.
+    Total players are always split 50/50 (one extra on team A if odd total).
+    Forwards and Defence are split as evenly as possible within that constraint,
+    with flex players used to balance whichever side needs it.
+    """
+    f_count = sum(1 for p in players if p.position == "F")
+    d_count = sum(1 for p in players if p.position == "D")
+    flex    = sum(1 for p in players if p.position == "F/D")
+    total   = f_count + d_count + flex
+
+    # Total per team — team A gets the extra player if odd
+    target_a = (total + 1) // 2
+    target_b = total // 2
+
+    # Split each position group as evenly as possible
+    a_f = (f_count + 1) // 2
+    b_f = f_count // 2
+    a_d = (d_count + 1) // 2
+    b_d = d_count // 2
+
+    # Distribute flex players to bring each team up to its target total
+    flex_remaining = flex
+    need_a = target_a - (a_f + a_d)
+    need_b = target_b - (b_f + b_d)
+
+    # Give team A its share of flex first, then team B gets the rest
+    give_a = min(need_a, flex_remaining)
+    flex_remaining -= give_a
+    give_b = min(need_b, flex_remaining)
+
+    # Flex slots are added as F slots (balancer will fill D if F is full)
+    a_f += give_a
+    b_f += give_b
+
+    return {"F": a_f, "D": a_d}, {"F": b_f, "D": b_d}
 
 
 def assign_player(team, player, pos):
